@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExpenseTrack Pro | Multi-User Expense Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .glassmorphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .glassmorphism-dark {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .dark .glassmorphism-dark {
+            background: rgba(0, 0, 0, 0.3);
+        }
+        .smooth-transition {
+            transition: all 0.3s ease;
+        }
+        .neumorphic {
+            border-radius: 15px;
+            background: #e0e0e0;
+            box-shadow:  10px 10px 20px #bebebe,
+                        -10px -10px 20px #ffffff;
+        }
+        .dark .neumorphic {
+            background: #2d3748;
+            box-shadow:  10px 10px 20px #1a202c,
+                        -10px -10px 20px #4a5568;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .dark .gradient-bg {
+            background: linear-gradient(135deg, #4c51bf 0%, #6b46c1 100%);
+        }
+        .income-gradient {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+        }
+        .expense-gradient {
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+        }
+        .balance-gradient {
+            background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        }
+        .category-color-0 { background-color: #3b82f6; }
+        .category-color-1 { background-color: #10b981; }
+        .category-color-2 { background-color: #f59e0b; }
+        .category-color-3 { background-color: #ef4444; }
+        .category-color-4 { background-color: #8b5cf6; }
+        .category-color-5 { background-color: #ec4899; }
+        .category-color-6 { background-color: #06b6d4; }
+        .category-color-7 { background-color: #84cc16; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 smooth-transition">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Mock backend for multi-user sync simulation
+        const mockBackend = {
+            users: [
+                { id: 1, username: "family", password: "family123", name: "Family Account" },
+                { id: 2, username: "roommates", password: "room123", name: "Roommates" },
+                { id: 3, username: "couple", password: "couple123", name: "Couple Account" }
+            ],
+            
+            // Simulate API call delay
+            delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+            
+            // Mock login function
+            login: async (username, password) => {
+                await mockBackend.delay(500);
+                const user = mockBackend.users.find(u => u.username === username && u.password === password);
+                return user ? { success: true, user: { id: user.id, name: user.name } } : { success: false, error: "Invalid credentials" };
+            },
+            
+            // Mock data sync function
+            syncData: async (userId, data) => {
+                await mockBackend.delay(300);
+                // In a real app, this would sync with a cloud database
+                // For this demo, we'll just simulate success
+                return { success: true, message: "Data synced successfully" };
+            },
+            
+            // Mock data fetch function
+            fetchData: async (userId) => {
+                await mockBackend.delay(300);
+                // Get data from localStorage for the specific user
+                const storedData = localStorage.getItem(`expense_tracker_data_${userId}`);
+                return storedData ? JSON.parse(storedData) : null;
+            }
+        };
+
+        // Expense categories
+        const categories = [
+            "Food & Dining", "Transportation", "Shopping", "Entertainment", 
+            "Bills & Utilities", "Healthcare", "Education", "Other"
+        ];
+
+        // Main App Component
+        const App = () => {
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [currentUser, setCurrentUser] = useState(null);
+            const [darkMode, setDarkMode] = useState(false);
+            const [userName, setUserName] = useState("");
+            const [transactions, setTransactions] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [activeView, setActiveView] = useState("dashboard");
+
+            // Initialize theme from localStorage
+            useEffect(() => {
+                const savedDarkMode = localStorage.getItem('expense_tracker_darkmode') === 'true';
+                setDarkMode(savedDarkMode);
+                if (savedDarkMode) {
+                    document.body.classList.add('dark');
+                }
+                
+                // Check if user is already logged in
+                const savedUser = localStorage.getItem('expense_tracker_user');
+                if (savedUser) {
+                    const user = JSON.parse(savedUser);
+                    setCurrentUser(user);
+                    setIsLoggedIn(true);
+                    setUserName(user.name);
+                    loadUserData(user.id);
+                }
+            }, []);
+
+            // Toggle dark mode
+            const toggleDarkMode = () => {
+                const newDarkMode = !darkMode;
+                setDarkMode(newDarkMode);
+                localStorage.setItem('expense_tracker_darkmode', newDarkMode);
+                if (newDarkMode) {
+                    document.body.classList.add('dark');
+                } else {
+                    document.body.classList.remove('dark');
+                }
+            };
+
+            // Load user data
+            const loadUserData = async (userId) => {
+                setIsLoading(true);
+                try {
+                    const data = await mockBackend.fetchData(userId);
+                    if (data) {
+                        setTransactions(data.transactions || []);
+                        setUserName(data.userName || "");
+                    } else {
+                        // Initialize with empty data
+                        setTransactions([]);
+                    }
+                } catch (error) {
+                    console.error("Error loading data:", error);
+                }
+                setIsLoading(false);
+            };
+
+            // Handle login
+            const handleLogin = async (username, password) => {
+                setIsLoading(true);
+                const result = await mockBackend.login(username, password);
+                setIsLoading(false);
+                
+                if (result.success) {
+                    setCurrentUser(result.user);
+                    setIsLoggedIn(true);
+                    setUserName(result.user.name);
+                    localStorage.setItem('expense_tracker_user', JSON.stringify(result.user));
+                    loadUserData(result.user.id);
+                    return true;
+                }
+                return false;
+            };
+
+            // Handle logout
+            const handleLogout = () => {
+                setIsLoggedIn(false);
+                setCurrentUser(null);
+                setTransactions([]);
+                localStorage.removeItem('expense_tracker_user');
+            };
+
+            // Save data to localStorage and sync with mock backend
+            const saveData = async () => {
+                if (!currentUser) return;
+                
+                const data = {
+                    transactions,
+                    userName,
+                    lastUpdated: new Date().toISOString()
+                };
+                
+                localStorage.setItem(`expense_tracker_data_${currentUser.id}`, JSON.stringify(data));
+                
+                // Simulate syncing with backend
+                await mockBackend.syncData(currentUser.id, data);
+            };
+
+            // Add transaction
+            const addTransaction = (transaction) => {
+                const newTransaction = {
+                    ...transaction,
+                    id: Date.now().toString(),
+                    date: transaction.date || new Date().toISOString().split('T')[0]
+                };
+                
+                const updatedTransactions = [...transactions, newTransaction];
+                setTransactions(updatedTransactions);
+                
+                // Save after state update
+                setTimeout(() => saveData(), 0);
+                
+                return newTransaction;
+            };
+
+            // Delete transaction
+            const deleteTransaction = (id) => {
+                const updatedTransactions = transactions.filter(t => t.id !== id);
+                setTransactions(updatedTransactions);
+                
+                // Save after state update
+                setTimeout(() => saveData(), 0);
+            };
+
+            // Edit transaction
+            const editTransaction = (id, updatedData) => {
+                const updatedTransactions = transactions.map(t => 
+                    t.id === id ? { ...t, ...updatedData } : t
+                );
+                setTransactions(updatedTransactions);
+                
+                // Save after state update
+                setTimeout(() => saveData(), 0);
+            };
+
+            // Update user name
+            const updateUserName = (name) => {
+                setUserName(name);
+                setTimeout(() => saveData(), 0);
+            };
+
+            // Export data to Excel/CSV
+            const exportData = () => {
+                const dataToExport = transactions.map(t => ({
+                    Date: t.date,
+                    Type: t.type,
+                    Category: t.category,
+                    Description: t.description,
+                    Amount: t.amount,
+                    'Created At': new Date(parseInt(t.id)).toLocaleString()
+                }));
+                
+                const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions");
+                XLSX.writeFile(workbook, `expense_tracker_${new Date().toISOString().split('T')[0]}.xlsx`);
+            };
+
+            if (!isLoggedIn) {
+                return <LoginPage onLogin={handleLogin} darkMode={darkMode} toggleDarkMode={toggleDarkMode} isLoading={isLoading} />;
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-50 dark:bg-gray-900 smooth-transition">
+                    <Navigation 
+                        activeView={activeView} 
+                        setActiveView={setActiveView}
+                        userName={userName}
+                        onLogout={handleLogout}
+                        darkMode={darkMode}
+                        toggleDarkMode={toggleDarkMode}
+                        onExport={exportData}
+                    />
+                    
+                    <main className="container mx-auto px-4 py-6">
+                        {isLoading ? (
+                            <div className="flex justify-center items-center h-64">
+                                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                            </div>
+                        ) : (
+                            <>
+                                {activeView === "dashboard" && (
+                                    <Dashboard 
+                                        transactions={transactions}
+                                        userName={userName}
+                                        darkMode={darkMode}
+                                    />
+                                )}
+                                
+                                {activeView === "add" && (
+                                    <AddTransaction 
+                                        onAddTransaction={addTransaction}
+                                        categories={categories}
+                                        darkMode={darkMode}
+                                    />
+                                )}
+                                
+                                {activeView === "transactions" && (
+                                    <TransactionList 
+                                        transactions={transactions}
+                                        onDeleteTransaction={deleteTransaction}
+                                        onEditTransaction={editTransaction}
+                                        categories={categories}
+                                        darkMode={darkMode}
+                                    />
+                                )}
+                                
+                                {activeView === "analytics" && (
+                                    <Analytics 
+                                        transactions={transactions}
+                                        darkMode={darkMode}
+                                    />
+                                )}
+                                
+                                {activeView === "profile" && (
+                                    <Profile 
+                                        userName={userName}
+                                        onUpdateUserName={updateUserName}
+                                        currentUser={currentUser}
+                                        darkMode={darkMode}
+                                    />
+                                )}
+                            </>
+                        )}
+                    </main>
+                    
+                    <footer className="text-center py-6 text-gray-600 dark:text-gray-400 text-sm">
+                        <p>ExpenseTrack Pro &copy; {new Date().getFullYear()} - Multi-User Expense Tracking</p>
+                        <p className="mt-1">Data is stored locally and synced across users with the same credentials</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        // Login Page Component
+        const LoginPage = ({ onLogin, darkMode, toggleDarkMode, isLoading }) => {
+            const [username, setUsername] = useState("");
+            const [password, setPassword] = useState("");
+            const [error, setError] = useState("");
+            
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError("");
+                
+                if (!username.trim() || !password.trim()) {
+                    setError("Please enter both username and password");
+                    return;
+                }
+                
+                const success = await onLogin(username, password);
+                if (!success) {
+                    setError("Invalid username or password. Try: family/family123, roommates/room123, couple/couple123");
+                }
+            };
+            
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center gradient-bg p-4">
+                    <div className="absolute top-6 right-6">
+                        <button
+                            onClick={toggleDarkMode}
+                            className="p-3 rounded-full glassmorphism text-gray-700 dark:text-white"
+                        >
+                            {darkMode ? <i className="fas fa-sun"></i> : <i className="fas fa-moon"></i>}
+                        </button>
+                    </div>
+                    
+                    <div className="w-full max-w-md">
+                        <div className="glassmorphism rounded-2xl p-8 shadow-2xl">
+                            <div className="text-center mb-8">
+                                <h1 className="text-4xl font-bold text-white mb-2">ExpenseTrack Pro</h1>
+                                <p className="text-white/80">Multi-User Expense Tracking Solution</p>
+                            </div>
+                            
+                            <form onSubmit={handleSubmit}>
+                                <div className="mb-6">
+                                    <label className="block text-white mb-2 font-medium">Username</label>
+                                    <input
+                                        type="text"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        className="w-full p-4 rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50"
+                                        placeholder="Enter username"
+                                    />
+                                </div>
+                                
+                                <div className="mb-8">
+                                    <label className="block text-white mb-2 font-medium">Password</label>
+                                    <input
+                                        type="password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className="w-full p-4 rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50"
+                                        placeholder="Enter password"
+                                    />
+                                </div>
+                                
+                                {error && (
+                                    <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-white">
+                                        <i className="fas fa-exclamation-circle mr-2"></i>
+                                        {error}
+                                    </div>
+                                )}
+                                
+                                <button
+                                    type="submit"
+                                    disabled={isLoading}
+                                    className="w-full py-4 bg-white text-purple-700 rounded-xl font-bold text-lg hover:bg-gray-100 transition-all duration-300 disabled:opacity-70"
+                                >
+                                    {isLoading ? (
+                                        <span className="flex items-center justify-center">
+                                            <i className="fas fa-spinner fa-spin mr-2"></i> Logging in...
+                                        </span>
+                                    ) : (
+                                        "Login to Expense Tracker"
+                                    )}
+                                </button>
+                            </form>
+                            
+                            <div className="mt-8 pt-6 border-t border-white/30">
+                                <p className="text-white/80 text-center mb-4">Demo Credentials:</p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                    <div className="bg-white/10 p-3 rounded-lg text-white">
+                                        <p className="font-bold">Family</p>
+                                        <p>User: family</p>
+                                        <p>Pass: family123</p>
+                                    </div>
+                                    <div className="bg-white/10 p-3 rounded-lg text-white">
+                                        <p className="font-bold">Roommates</p>
+                                        <p>User: roommates</p>
+                                        <p>Pass: room123</p>
+                                    </div>
+                                    <div className="bg-white/10 p-3 rounded-lg text-white">
+                                        <p className="font-bold">Couple</p>
+                                        <p>User: couple</p>
+                                        <p>Pass: couple123</p>
+                                    </div>
+                                </div>
+                                <p className="text-white/60 text-center mt-6 text-sm">
+                                    <i className="fas fa-info-circle mr-1"></i> Data is persistent per user account
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Navigation Component
+        const Navigation = ({ activeView, setActiveView, userName, onLogout, darkMode, toggleDarkMode, onExport }) => {
+            return (
+                <nav className="glassmorphism-dark py-4 px-6 shadow-lg">
+                    <div className="container mx-auto flex flex-col md:flex-row justify-between items-center">
+                        <div className="flex items-center mb-4 md:mb-0">
+                            <div className="text-2xl font-bold gradient-text bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
+                                ExpenseTrack Pro
+                            </div>
+                            <div className="ml-6 text-lg font-medium text-gray-700 dark:text-gray-300">
+                                Welcome, <span className="font-bold">{userName}</span>
+                            </div>
+                        </div>
+                        
+                        <div className="flex flex-wrap justify-center items-center space-x-2 mb-4 md:mb-0">
+                            <NavButton active={activeView === "dashboard"} onClick={() => setActiveView("dashboard")}>
+                                <i className="fas fa-home mr-2"></i> Dashboard
+                            </NavButton>
+                            <NavButton active={activeView === "add"} onClick={() => setActiveView("add")}>
+                                <i className="fas fa-plus mr-2"></i> Add Transaction
+                            </NavButton>
+                            <NavButton active={activeView === "transactions"} onClick={() => setActiveView("transactions")}>
+                                <i className="fas fa-list mr-2"></i> Transactions
+                            </NavButton>
+                            <NavButton active={activeView === "analytics"} onClick={() => setActiveView("analytics")}>
+                                <i className="fas fa-chart-pie mr-2"></i> Analytics
+                            </NavButton>
+                            <NavButton active={activeView === "profile"} onClick={() => setActiveView("profile")}>
+                                <i className="fas fa-user mr-2"></i> Profile
+                            </NavButton>
+                        </div>
+                        
+                        <div className="flex items-center space-x-4">
+                            <button
+                                onClick={onExport}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium smooth-transition"
+                                title="Export to Excel"
+                            >
+                                <i className="fas fa-file-export mr-2"></i> Export
+                            </button>
+                            <button
+                                onClick={toggleDarkMode}
+                                className="p-3 rounded-full glassmorphism text-gray-700 dark:text-white"
+                                title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                            >
+                                {darkMode ? <i className="fas fa-sun"></i> : <i className="fas fa-moon"></i>}
+                            </button>
+                            <button
+                                onClick={onLogout}
+                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium smooth-transition"
+                            >
+                                <i className="fas fa-sign-out-alt mr-2"></i> Logout
+                            </button>
+                        </div>
+                    </div>
+                </nav>
+            );
+        };
+
+        // Navigation Button Component
+        const NavButton = ({ active, onClick, children }) => {
+            return (
+                <button
+                    onClick={onClick}
+                    className={`px-4 py-2 rounded-lg font-medium smooth-transition ${active 
+                        ? 'bg-blue-600 text-white shadow-md' 
+                        : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700'
+                    }`}
+                >
+                    {children}
+                </button>
+            );
+        };
+
+        // Dashboard Component
+        const Dashboard = ({ transactions, userName, darkMode }) => {
+            // Calculate totals
+            const calculateTotals = () => {
+                const income = transactions
+                    .filter(t => t.type === "income")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                const expense = transactions
+                    .filter(t => t.type === "expense")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                const balance = income - expense;
+                
+                return { income, expense, balance };
+            };
+            
+            // Get recent transactions
+            const getRecentTransactions = () => {
+                return [...transactions]
+                    .sort((a, b) => new Date(b.date) - new Date(a.date))
+                    .slice(0, 5);
+            };
+            
+            // Get monthly summary
+            const getMonthlySummary = () => {
+                const currentMonth = new Date().getMonth();
+                const currentYear = new Date().getFullYear();
+                
+                const monthlyTransactions = transactions.filter(t => {
+                    const date = new Date(t.date);
+                    return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+                });
+                
+                const monthlyIncome = monthlyTransactions
+                    .filter(t => t.type === "income")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                const monthlyExpense = monthlyTransactions
+                    .filter(t => t.type === "expense")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                return { monthlyIncome, monthlyExpense };
+            };
+            
+            const { income, expense, balance } = calculateTotals();
+            const { monthlyIncome, monthlyExpense } = getMonthlySummary();
+            const recentTransactions = getRecentTransactions();
+            
+            return (
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-8">
+                        Dashboard Overview
+                    </h1>
+                    
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                        <SummaryCard 
+                            title="Total Income" 
+                            amount={income} 
+                            type="income"
+                            subtitle={`${monthlyIncome.toFixed(2)} this month`}
+                        />
+                        <SummaryCard 
+                            title="Total Expenses" 
+                            amount={expense} 
+                            type="expense"
+                            subtitle={`${monthlyExpense.toFixed(2)} this month`}
+                        />
+                        <SummaryCard 
+                            title="Current Balance" 
+                            amount={balance} 
+                            type="balance"
+                            subtitle={balance >= 0 ? "Positive balance" : "Negative balance"}
+                        />
+                    </div>
+                    
+                    {/* Recent Transactions and Monthly Chart */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-6 flex items-center">
+                                <i className="fas fa-history mr-3 text-blue-500"></i> Recent Transactions
+                            </h2>
+                            
+                            {recentTransactions.length > 0 ? (
+                                <div className="space-y-4">
+                                    {recentTransactions.map(transaction => (
+                                        <TransactionItem key={transaction.id} transaction={transaction} />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                                    <i className="fas fa-receipt text-4xl mb-4"></i>
+                                    <p>No transactions yet. Add your first transaction!</p>
+                                </div>
+                            )}
+                            
+                            <div className="mt-6 text-center">
+                                <button 
+                                    onClick={() => window.location.hash = "#transactions"}
+                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
+                                >
+                                    View All Transactions
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-6 flex items-center">
+                                <i className="fas fa-chart-bar mr-3 text-green-500"></i> Monthly Overview
+                            </h2>
+                            <MonthlyChart 
+                                transactions={transactions}
+                                darkMode={darkMode}
+                            />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Summary Card Component
+        const SummaryCard = ({ title, amount, type, subtitle }) => {
+            const gradientClass = type === "income" ? "income-gradient" : 
+                                type === "expense" ? "expense-gradient" : "balance-gradient";
+            
+            return (
+                <div className="neumorphic p-6 rounded-2xl">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-gray-800 dark:text-white">{title}</h3>
+                        <div className={`p-3 rounded-full ${gradientClass} text-white`}>
+                            {type === "income" && <i className="fas fa-arrow-down"></i>}
+                            {type === "expense" && <i className="fas fa-arrow-up"></i>}
+                            {type === "balance" && <i className="fas fa-wallet"></i>}
+                        </div>
+                    </div>
+                    <p className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+                        ${amount.toFixed(2)}
+                    </p>
+                    <p className="text-gray-600 dark:text-gray-400">{subtitle}</p>
+                </div>
+            );
+        };
+
+        // Transaction Item Component
+        const TransactionItem = ({ transaction }) => {
+            const isIncome = transaction.type === "income";
+            const categoryColor = categories.indexOf(transaction.category) % 8;
+            
+            return (
+                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                    <div className="flex items-center">
+                        <div className={`p-3 rounded-full mr-4 category-color-${categoryColor} text-white`}>
+                            <i className={isIncome ? "fas fa-arrow-down" : "fas fa-arrow-up"}></i>
+                        </div>
+                        <div>
+                            <p className="font-medium text-gray-800 dark:text-white">{transaction.description}</p>
+                            <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
+                                <span className="mr-3">{transaction.date}</span>
+                                <span className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">
+                                    {transaction.category}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className={`text-lg font-bold ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                        {isIncome ? '+' : '-'}${parseFloat(transaction.amount).toFixed(2)}
+                    </div>
+                </div>
+            );
+        };
+
+        // Monthly Chart Component
+        const MonthlyChart = ({ transactions, darkMode }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+            
+            useEffect(() => {
+                if (!transactions.length) return;
+                
+                // Get current month and year
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                
+                // Get days in current month
+                const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+                
+                // Prepare data for each day
+                const dailyData = [];
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    
+                    const dayTransactions = transactions.filter(t => t.date === dateStr);
+                    const dayIncome = dayTransactions
+                        .filter(t => t.type === "income")
+                        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                    const dayExpense = dayTransactions
+                        .filter(t => t.type === "expense")
+                        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                    
+                    dailyData.push({
+                        day: day,
+                        income: dayIncome,
+                        expense: dayExpense
+                    });
+                }
+                
+                // Create chart
+                const ctx = chartRef.current.getContext('2d');
+                
+                // Destroy previous chart instance if exists
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+                
+                chartInstance.current = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: dailyData.map(d => d.day),
+                        datasets: [
+                            {
+                                label: 'Income',
+                                data: dailyData.map(d => d.income),
+                                backgroundColor: 'rgba(34, 197, 94, 0.7)',
+                                borderColor: 'rgb(34, 197, 94)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Expenses',
+                                data: dailyData.map(d => d.expense),
+                                backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                                borderColor: 'rgb(239, 68, 68)',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: {
+                                    color: darkMode ? '#fff' : '#374151'
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: {
+                                    color: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                },
+                                ticks: {
+                                    color: darkMode ? '#fff' : '#374151'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                },
+                                ticks: {
+                                    color: darkMode ? '#fff' : '#374151',
+                                    callback: function(value) {
+                                        return '$' + value;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+                };
+            }, [transactions, darkMode]);
+            
+            return (
+                <div>
+                    {transactions.length > 0 ? (
+                        <canvas ref={chartRef} id="monthlyChart"></canvas>
+                    ) : (
+                        <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                            <i className="fas fa-chart-bar text-4xl mb-4"></i>
+                            <p>No data available for monthly chart</p>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Add Transaction Component
+        const AddTransaction = ({ onAddTransaction, categories, darkMode }) => {
+            const [type, setType] = useState("expense");
+            const [category, setCategory] = useState(categories[0]);
+            const [description, setDescription] = useState("");
+            const [amount, setAmount] = useState("");
+            const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+            const [successMessage, setSuccessMessage] = useState("");
+            
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                
+                if (!description.trim() || !amount || parseFloat(amount) <= 0) {
+                    alert("Please enter a valid description and amount");
+                    return;
+                }
+                
+                const transaction = {
+                    type,
+                    category,
+                    description,
+                    amount: parseFloat(amount).toFixed(2),
+                    date
+                };
+                
+                onAddTransaction(transaction);
+                
+                // Reset form
+                setDescription("");
+                setAmount("");
+                setDate(new Date().toISOString().split('T')[0]);
+                
+                // Show success message
+                setSuccessMessage(`${type === "income" ? "Income" : "Expense"} added successfully!`);
+                setTimeout(() => setSuccessMessage(""), 3000);
+            };
+            
+            return (
+                <div className="max-w-2xl mx-auto">
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-8">
+                        Add New Transaction
+                    </h1>
+                    
+                    {successMessage && (
+                        <div className="mb-6 p-4 bg-green-100 dark:bg-green-900/30 border border-green-500 rounded-xl text-green-800 dark:text-green-300">
+                            <i className="fas fa-check-circle mr-2"></i>
+                            {successMessage}
+                        </div>
+                    )}
+                    
+                    <div className="neumorphic p-8 rounded-2xl">
+                        <form onSubmit={handleSubmit}>
+                            {/* Type Selection */}
+                            <div className="mb-8">
+                                <label className="block text-gray-700 dark:text-gray-300 mb-4 font-bold">Transaction Type</label>
+                                <div className="flex space-x-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setType("income")}
+                                        className={`flex-1 py-4 rounded-xl font-bold text-lg smooth-transition ${type === "income" 
+                                            ? 'income-gradient text-white shadow-md' 
+                                            : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+                                    >
+                                        <i className="fas fa-arrow-down mr-2"></i> Income
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setType("expense")}
+                                        className={`flex-1 py-4 rounded-xl font-bold text-lg smooth-transition ${type === "expense" 
+                                            ? 'expense-gradient text-white shadow-md' 
+                                            : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+                                    >
+                                        <i className="fas fa-arrow-up mr-2"></i> Expense
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {/* Category Selection */}
+                            <div className="mb-8">
+                                <label className="block text-gray-700 dark:text-gray-300 mb-4 font-bold">Category</label>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    {categories.map((cat, index) => (
+                                        <button
+                                            key={cat}
+                                            type="button"
+                                            onClick={() => setCategory(cat)}
+                                            className={`py-3 rounded-lg font-medium smooth-transition ${category === cat 
+                                                ? `category-color-${index % 8} text-white shadow-md` 
+                                                : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                        >
+                                            {cat}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* Description */}
+                            <div className="mb-8">
+                                <label className="block text-gray-700 dark:text-gray-300 mb-2 font-bold">Description</label>
+                                <input
+                                    type="text"
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                    className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Enter transaction description"
+                                    required
+                                />
+                            </div>
+                            
+                            {/* Amount and Date */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                                <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 mb-2 font-bold">Amount ($)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0.01"
+                                        value={amount}
+                                        onChange={(e) => setAmount(e.target.value)}
+                                        className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="0.00"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 mb-2 font-bold">Date</label>
+                                    <input
+                                        type="date"
+                                        value={date}
+                                        onChange={(e) => setDate(e.target.value)}
+                                        className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            
+                            {/* Submit Button */}
+                            <button
+                                type="submit"
+                                className="w-full py-4 gradient-bg text-white rounded-xl font-bold text-lg hover:opacity-90 smooth-transition"
+                            >
+                                <i className="fas fa-plus mr-2"></i> Add Transaction
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // Transaction List Component
+        const TransactionList = ({ transactions, onDeleteTransaction, onEditTransaction, categories, darkMode }) => {
+            const [filterType, setFilterType] = useState("all");
+            const [filterCategory, setFilterCategory] = useState("all");
+            const [filterMonth, setFilterMonth] = useState("all");
+            const [filterYear, setFilterYear] = useState("all");
+            const [editingId, setEditingId] = useState(null);
+            const [editForm, setEditForm] = useState({});
+            
+            // Get unique years from transactions
+            const getUniqueYears = () => {
+                const years = transactions.map(t => new Date(t.date).getFullYear());
+                return [...new Set(years)].sort((a, b) => b - a);
+            };
+            
+            // Filter transactions based on selected filters
+            const filteredTransactions = transactions.filter(t => {
+                if (filterType !== "all" && t.type !== filterType) return false;
+                if (filterCategory !== "all" && t.category !== filterCategory) return false;
+                if (filterMonth !== "all" && new Date(t.date).getMonth() + 1 !== parseInt(filterMonth)) return false;
+                if (filterYear !== "all" && new Date(t.date).getFullYear() !== parseInt(filterYear)) return false;
+                return true;
+            });
+            
+            // Handle edit start
+            const handleEditStart = (transaction) => {
+                setEditingId(transaction.id);
+                setEditForm({
+                    description: transaction.description,
+                    amount: transaction.amount,
+                    category: transaction.category,
+                    date: transaction.date,
+                    type: transaction.type
+                });
+            };
+            
+            // Handle edit save
+            const handleEditSave = (id) => {
+                onEditTransaction(id, editForm);
+                setEditingId(null);
+            };
+            
+            // Handle edit cancel
+            const handleEditCancel = () => {
+                setEditingId(null);
+                setEditForm({});
+            };
+            
+            // Calculate filtered totals
+            const filteredTotals = filteredTransactions.reduce(
+                (totals, t) => {
+                    if (t.type === "income") {
+                        totals.income += parseFloat(t.amount);
+                    } else {
+                        totals.expense += parseFloat(t.amount);
+                    }
+                    return totals;
+                },
+                { income: 0, expense: 0 }
+            );
+            
+            return (
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-8">
+                        Transaction History
+                    </h1>
+                    
+                    {/* Filters */}
+                    <div className="neumorphic p-6 rounded-2xl mb-8">
+                        <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-6">Filter Transactions</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div>
+                                <label className="block text-gray-700 dark:text-gray-300 mb-2">Type</label>
+                                <select
+                                    value={filterType}
+                                    onChange={(e) => setFilterType(e.target.value)}
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white"
+                                >
+                                    <option value="all">All Types</option>
+                                    <option value="income">Income</option>
+                                    <option value="expense">Expense</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-gray-700 dark:text-gray-300 mb-2">Category</label>
+                                <select
+                                    value={filterCategory}
+                                    onChange={(e) => setFilterCategory(e.target.value)}
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white"
+                                >
+                                    <option value="all">All Categories</option>
+                                    {categories.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-gray-700 dark:text-gray-300 mb-2">Month</label>
+                                <select
+                                    value={filterMonth}
+                                    onChange={(e) => setFilterMonth(e.target.value)}
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white"
+                                >
+                                    <option value="all">All Months</option>
+                                    {Array.from({ length: 12 }, (_, i) => (
+                                        <option key={i+1} value={i+1}>
+                                            {new Date(0, i).toLocaleString('default', { month: 'long' })}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-gray-700 dark:text-gray-300 mb-2">Year</label>
+                                <select
+                                    value={filterYear}
+                                    onChange={(e) => setFilterYear(e.target.value)}
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white"
+                                >
+                                    <option value="all">All Years</option>
+                                    {getUniqueYears().map(year => (
+                                        <option key={year} value={year}>{year}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        {/* Filtered Totals */}
+                        <div className="mt-6 flex justify-between items-center">
+                            <div>
+                                <p className="text-gray-700 dark:text-gray-300">
+                                    Showing {filteredTransactions.length} of {transactions.length} transactions
+                                </p>
+                            </div>
+                            <div className="flex space-x-6">
+                                <div className="text-center">
+                                    <p className="text-sm text-gray-600 dark:text-gray-400">Filtered Income</p>
+                                    <p className="text-xl font-bold text-green-600">${filteredTotals.income.toFixed(2)}</p>
+                                </div>
+                                <div className="text-center">
+                                    <p className="text-sm text-gray-600 dark:text-gray-400">Filtered Expenses</p>
+                                    <p className="text-xl font-bold text-red-600">${filteredTotals.expense.toFixed(2)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* Transactions Table */}
+                    <div className="neumorphic rounded-2xl overflow-hidden">
+                        {filteredTransactions.length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <table className="w-full">
+                                    <thead className="bg-gray-100 dark:bg-gray-800">
+                                        <tr>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Date</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Type</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Category</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Description</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Amount</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredTransactions.map(transaction => (
+                                            <tr key={transaction.id} className="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                                <td className="p-4 text-gray-800 dark:text-gray-300">{transaction.date}</td>
+                                                <td className="p-4">
+                                                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${transaction.type === "income" 
+                                                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" 
+                                                        : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"}`}>
+                                                        {transaction.type === "income" ? "Income" : "Expense"}
+                                                    </span>
+                                                </td>
+                                                <td className="p-4 text-gray-800 dark:text-gray-300">{transaction.category}</td>
+                                                <td className="p-4 text-gray-800 dark:text-gray-300">
+                                                    {editingId === transaction.id ? (
+                                                        <input
+                                                            type="text"
+                                                            value={editForm.description}
+                                                            onChange={(e) => setEditForm({...editForm, description: e.target.value})}
+                                                            className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"
+                                                        />
+                                                    ) : (
+                                                        transaction.description
+                                                    )}
+                                                </td>
+                                                <td className="p-4 font-medium">
+                                                    {editingId === transaction.id ? (
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            value={editForm.amount}
+                                                            onChange={(e) => setEditForm({...editForm, amount: e.target.value})}
+                                                            className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"
+                                                        />
+                                                    ) : (
+                                                        <span className={transaction.type === "income" ? "text-green-600" : "text-red-600"}>
+                                                            {transaction.type === "income" ? "+" : "-"}${parseFloat(transaction.amount).toFixed(2)}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="p-4">
+                                                    {editingId === transaction.id ? (
+                                                        <div className="flex space-x-2">
+                                                            <button
+                                                                onClick={() => handleEditSave(transaction.id)}
+                                                                className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                                                            >
+                                                                Save
+                                                            </button>
+                                                            <button
+                                                                onClick={handleEditCancel}
+                                                                className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700"
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex space-x-2">
+                                                            <button
+                                                                onClick={() => handleEditStart(transaction)}
+                                                                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                                                title="Edit"
+                                                            >
+                                                                <i className="fas fa-edit"></i>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => onDeleteTransaction(transaction.id)}
+                                                                className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                                                                title="Delete"
+                                                            >
+                                                                <i className="fas fa-trash"></i>
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="text-center py-16 text-gray-500 dark:text-gray-400">
+                                <i className="fas fa-receipt text-5xl mb-4"></i>
+                                <p className="text-xl mb-2">No transactions found</p>
+                                <p className="mb-6">Try changing your filters or add a new transaction</p>
+                                <button 
+                                    onClick={() => window.location.hash = "#add"}
+                                    className="px-6 py-3 gradient-bg text-white rounded-lg font-medium"
+                                >
+                                    <i className="fas fa-plus mr-2"></i> Add Transaction
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Analytics Component
+        const Analytics = ({ transactions, darkMode }) => {
+            const [chartType, setChartType] = useState("pie");
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+            
+            // Prepare data for charts
+            const prepareCategoryData = () => {
+                const categoryData = {};
+                
+                transactions.forEach(t => {
+                    if (t.type === "expense") {
+                        categoryData[t.category] = (categoryData[t.category] || 0) + parseFloat(t.amount);
+                    }
+                });
+                
+                return {
+                    labels: Object.keys(categoryData),
+                    data: Object.values(categoryData),
+                    colors: Object.keys(categoryData).map((_, i) => 
+                        `hsl(${(i * 360) / Object.keys(categoryData).length}, 70%, 60%)`
+                    )
+                };
+            };
+            
+            // Prepare monthly trend data
+            const prepareMonthlyTrendData = () => {
+                const monthlyData = Array(12).fill(0);
+                const monthlyLabels = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                ];
+                
+                transactions.forEach(t => {
+                    if (t.type === "expense") {
+                        const month = new Date(t.date).getMonth();
+                        monthlyData[month] += parseFloat(t.amount);
+                    }
+                });
+                
+                return {
+                    labels: monthlyLabels,
+                    data: monthlyData
+                };
+            };
+            
+            // Render chart based on type
+            useEffect(() => {
+                if (!transactions.length) return;
+                
+                const ctx = chartRef.current.getContext('2d');
+                
+                // Destroy previous chart instance if exists
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+                
+                if (chartType === "pie") {
+                    const categoryData = prepareCategoryData();
+                    
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'pie',
+                        data: {
+                            labels: categoryData.labels,
+                            datasets: [{
+                                data: categoryData.data,
+                                backgroundColor: categoryData.colors,
+                                borderColor: darkMode ? '#1f2937' : '#fff',
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    position: 'right',
+                                    labels: {
+                                        color: darkMode ? '#fff' : '#374151',
+                                        font: {
+                                            size: 14
+                                        }
+                                    }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const label = context.label || '';
+                                            const value = context.raw || 0;
+                                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                            const percentage = Math.round((value / total) * 100);
+                                            return `${label}: $${value.toFixed(2)} (${percentage}%)`;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    const trendData = prepareMonthlyTrendData();
+                    
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: trendData.labels,
+                            datasets: [{
+                                label: 'Monthly Expenses',
+                                data: trendData.data,
+                                borderColor: 'rgb(239, 68, 68)',
+                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                borderWidth: 3,
+                                fill: true,
+                                tension: 0.3
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    labels: {
+                                        color: darkMode ? '#fff' : '#374151'
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: {
+                                        color: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                    },
+                                    ticks: {
+                                        color: darkMode ? '#fff' : '#374151'
+                                    }
+                                },
+                                y: {
+                                    beginAtZero: true,
+                                    grid: {
+                                        color: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                    },
+                                    ticks: {
+                                        color: darkMode ? '#fff' : '#374151',
+                                        callback: function(value) {
+                                            return '$' + value;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+                };
+            }, [chartType, transactions, darkMode]);
+            
+            // Calculate analytics summary
+            const calculateAnalytics = () => {
+                const totalExpenses = transactions
+                    .filter(t => t.type === "expense")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                const totalIncome = transactions
+                    .filter(t => t.type === "income")
+                    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                
+                const avgExpense = transactions.filter(t => t.type === "expense").length > 0 
+                    ? totalExpenses / transactions.filter(t => t.type === "expense").length 
+                    : 0;
+                
+                const avgIncome = transactions.filter(t => t.type === "income").length > 0 
+                    ? totalIncome / transactions.filter(t => t.type === "income").length 
+                    : 0;
+                
+                const savingsRate = totalIncome > 0 
+                    ? ((totalIncome - totalExpenses) / totalIncome) * 100 
+                    : 0;
+                
+                return { totalExpenses, totalIncome, avgExpense, avgIncome, savingsRate };
+            };
+            
+            const { totalExpenses, totalIncome, avgExpense, avgIncome, savingsRate } = calculateAnalytics();
+            
+            return (
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-8">
+                        Spending Analytics
+                    </h1>
+                    
+                    {/* Analytics Summary */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-2">Total Expenses</h3>
+                            <p className="text-3xl font-bold text-red-600">${totalExpenses.toFixed(2)}</p>
+                            <p className="text-gray-600 dark:text-gray-400 mt-2">Avg: ${avgExpense.toFixed(2)} per transaction</p>
+                        </div>
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-2">Total Income</h3>
+                            <p className="text-3xl font-bold text-green-600">${totalIncome.toFixed(2)}</p>
+                            <p className="text-gray-600 dark:text-gray-400 mt-2">Avg: ${avgIncome.toFixed(2)} per transaction</p>
+                        </div>
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-2">Savings Rate</h3>
+                            <p className="text-3xl font-bold text-blue-600">{savingsRate.toFixed(1)}%</p>
+                            <p className="text-gray-600 dark:text-gray-400 mt-2">Of income saved</p>
+                        </div>
+                        <div className="neumorphic p-6 rounded-2xl">
+                            <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-2">Transactions</h3>
+                            <p className="text-3xl font-bold text-purple-600">{transactions.length}</p>
+                            <p className="text-gray-600 dark:text-gray-400 mt-2">
+                                {transactions.filter(t => t.type === "income").length} income, {transactions.filter(t => t.type === "expense").length} expense
+                            </p>
+                        </div>
+                    </div>
+                    
+                    {/* Chart Selection and Display */}
+                    <div className="neumorphic p-6 rounded-2xl mb-8">
+                        <div className="flex justify-between items-center mb-8">
+                            <h2 className="text-xl font-bold text-gray-800 dark:text-white">Visualizations</h2>
+                            <div className="flex space-x-4">
+                                <button
+                                    onClick={() => setChartType("pie")}
+                                    className={`px-4 py-2 rounded-lg font-medium ${chartType === "pie" 
+                                        ? 'bg-blue-600 text-white' 
+                                        : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+                                >
+                                    <i className="fas fa-chart-pie mr-2"></i> Category Breakdown
+                                </button>
+                                <button
+                                    onClick={() => setChartType("line")}
+                                    className={`px-4 py-2 rounded-lg font-medium ${chartType === "line" 
+                                        ? 'bg-blue-600 text-white' 
+                                        : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+                                >
+                                    <i className="fas fa-chart-line mr-2"></i> Monthly Trend
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div className="h-96">
+                            {transactions.length > 0 ? (
+                                <canvas ref={chartRef} id="analyticsChart"></canvas>
+                            ) : (
+                                <div className="flex justify-center items-center h-full text-gray-500 dark:text-gray-400">
+                                    <div className="text-center">
+                                        <i className="fas fa-chart-pie text-5xl mb-4"></i>
+                                        <p className="text-xl">No data available for analytics</p>
+                                        <p className="mt-2">Add transactions to see visualizations</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* Category Breakdown Table */}
+                    <div className="neumorphic p-6 rounded-2xl">
+                        <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-6">Category Breakdown</h2>
+                        {transactions.filter(t => t.type === "expense").length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <table className="w-full">
+                                    <thead className="bg-gray-100 dark:bg-gray-800">
+                                        <tr>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Category</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Total Spent</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Percentage</th>
+                                            <th className="p-4 text-left text-gray-700 dark:text-gray-300">Transactions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {prepareCategoryData().labels.map((label, index) => {
+                                            const total = prepareCategoryData().data[index];
+                                            const percentage = (total / totalExpenses) * 100;
+                                            const count = transactions.filter(t => 
+                                                t.type === "expense" && t.category === label
+                                            ).length;
+                                            
+                                            return (
+                                                <tr key={label} className="border-t border-gray-200 dark:border-gray-700">
+                                                    <td className="p-4 text-gray-800 dark:text-gray-300">{label}</td>
+                                                    <td className="p-4 font-bold text-red-600">${total.toFixed(2)}</td>
+                                                    <td className="p-4">
+                                                        <div className="flex items-center">
+                                                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mr-4">
+                                                                <div 
+                                                                    className="h-3 rounded-full bg-red-500"
+                                                                    style={{ width: `${percentage}%` }}
+                                                                ></div>
+                                                            </div>
+                                                            <span className="text-gray-700 dark:text-gray-300">{percentage.toFixed(1)}%</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 text-gray-800 dark:text-gray-300">{count} transactions</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                                <i className="fas fa-chart-bar text-4xl mb-4"></i>
+                                <p>No expense data available for category breakdown</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Profile Component
+        const Profile = ({ userName, onUpdateUserName, currentUser, darkMode }) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [newName, setNewName] = useState(userName);
+            const [syncStatus, setSyncStatus] = useState("Synced");
+            
+            const handleSaveName = () => {
+                if (newName.trim()) {
+                    onUpdateUserName(newName.trim());
+                    setIsEditing(false);
+                }
+            };
+            
+            const simulateSync = () => {
+                setSyncStatus("Syncing...");
+                setTimeout(() => {
+                    setSyncStatus("Synced");
+                }, 1500);
+            };
+            
+            // Calculate user stats
+            const userStats = {
+                totalTransactions: 0,
+                accountCreated: "2023-01-15",
+                lastLogin: new Date().toLocaleDateString()
+            };
+            
+            return (
+                <div className="max-w-4xl mx-auto">
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-8">
+                        User Profile & Settings
+                    </h1>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* User Info Card */}
+                        <div className="lg:col-span-2">
+                            <div className="neumorphic p-8 rounded-2xl mb-8">
+                                <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">Profile Information</h2>
+                                
+                                <div className="mb-8">
+                                    <div className="flex items-center mb-6">
+                                        <div className="p-4 rounded-full gradient-bg text-white mr-6">
+                                            <i className="fas fa-user text-2xl"></i>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-gray-800 dark:text-white">Account Holder</h3>
+                                            <p className="text-gray-600 dark:text-gray-400">Multi-user shared account</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="block text-gray-700 dark:text-gray-300 mb-2 font-medium">Display Name</label>
+                                            {isEditing ? (
+                                                <div className="flex items-center">
+                                                    <input
+                                                        type="text"
+                                                        value={newName}
+                                                        onChange={(e) => setNewName(e.target.value)}
+                                                        className="flex-1 p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    />
+                                                    <button
+                                                        onClick={handleSaveName}
+                                                        className="ml-4 px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsEditing(false);
+                                                            setNewName(userName);
+                                                        }}
+                                                        className="ml-2 px-6 py-4 bg-gray-600 hover:bg-gray-700 text-white rounded-xl font-medium"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center">
+                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{userName}</p>
+                                                    <button
+                                                        onClick={() => setIsEditing(true)}
+                                                        className="ml-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+                                                    >
+                                                        <i className="fas fa-edit mr-2"></i> Edit
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div>
+                                                <label className="block text-gray-700 dark:text-gray-300 mb-2 font-medium">Account Type</label>
+                                                <p className="text-gray-900 dark:text-white font-medium">Shared Family/Roommate Account</p>
+                                            </div>
+                                            <div>
+                                                <label className="block text-gray-700 dark:text-gray-300 mb-2 font-medium">Data Status</label>
+                                                <div className="flex items-center">
+                                                    <div className={`w-3 h-3 rounded-full mr-2 ${syncStatus === "Synced" ? "bg-green-500" : "bg-yellow-500"}`}></div>
+                                                    <p className="text-gray-900 dark:text-white font-medium">{syncStatus}</p>
+                                                    <button
+                                                        onClick={simulateSync}
+                                                        className="ml-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                                                    >
+                                                        <i className="fas fa-sync-alt mr-2"></i> Sync Now
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
+                                    <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Account Security</h3>
+                                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                                        This is a shared account. All users with the same credentials can access and modify the data.
+                                    </p>
+                                    <div className="flex items-center p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl">
+                                        <i className="fas fa-exclamation-triangle text-yellow-600 dark:text-yellow-400 text-xl mr-4"></i>
+                                        <p className="text-yellow-800 dark:text-yellow-300">
+                                            Remember to log out on shared devices to protect your data.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Data Management */}
+                            <div className="neumorphic p-8 rounded-2xl">
+                                <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">Data Management</h2>
+                                
+                                <div className="space-y-6">
+                                    <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 dark:text-white">Export Data</h4>
+                                            <p className="text-gray-600 dark:text-gray-400">Download all transactions as Excel or CSV file</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                // Trigger export
+                                                const event = new Event('exportData');
+                                                window.dispatchEvent(event);
+                                            }}
+                                            className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium"
+                                        >
+                                            <i className="fas fa-file-export mr-2"></i> Export
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 dark:text-white">Clear Local Data</h4>
+                                            <p className="text-gray-600 dark:text-gray-400">Remove all transactions from this device only</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                if (window.confirm("Are you sure you want to clear all local data? This action cannot be undone.")) {
+                                                    localStorage.removeItem(`expense_tracker_data_${currentUser.id}`);
+                                                    window.location.reload();
+                                                }
+                                            }}
+                                            className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium"
+                                        >
+                                            <i className="fas fa-trash-alt mr-2"></i> Clear Data
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Stats Card */}
+                        <div>
+                            <div className="neumorphic p-8 rounded-2xl sticky top-6">
+                                <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">Account Stats</h2>
+                                
+                                <div className="space-y-6">
+                                    <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                                        <div className="flex items-center mb-2">
+                                            <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-800 text-blue-600 dark:text-blue-300 mr-4">
+                                                <i className="fas fa-chart-line"></i>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">Active Since</p>
+                                                <p className="text-lg font-bold text-gray-900 dark:text-white">{userStats.accountCreated}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                                        <div className="flex items-center mb-2">
+                                            <div className="p-3 rounded-full bg-green-100 dark:bg-green-800 text-green-600 dark:text-green-300 mr-4">
+                                                <i className="fas fa-sign-in-alt"></i>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">Last Login</p>
+                                                <p className="text-lg font-bold text-gray-900 dark:text-white">{userStats.lastLogin}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
+                                        <div className="flex items-center mb-2">
+                                            <div className="p-3 rounded-full bg-purple-100 dark:bg-purple-800 text-purple-600 dark:text-purple-300 mr-4">
+                                                <i className="fas fa-database"></i>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">Storage Used</p>
+                                                <p className="text-lg font-bold text-gray-900 dark:text-white">Local Storage</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
+                                        <div className="flex items-center mb-2">
+                                            <div className="p-3 rounded-full bg-yellow-100 dark:bg-yellow-800 text-yellow-600 dark:text-yellow-300 mr-4">
+                                                <i className="fas fa-users"></i>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">Shared With</p>
+                                                <p className="text-lg font-bold text-gray-900 dark:text-white">Multiple Users</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                                            Anyone with login credentials can access this shared expense data
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                                    <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Quick Actions</h3>
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={() => window.location.hash = "#dashboard"}
+                                            className="w-full py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-800 dark:text-white rounded-lg font-medium flex items-center justify-center"
+                                        >
+                                            <i className="fas fa-home mr-2"></i> Go to Dashboard
+                                        </button>
+                                        <button
+                                            onClick={() => window.location.hash = "#add"}
+                                            className="w-full py-3 gradient-bg hover:opacity-90 text-white rounded-lg font-medium flex items-center justify-center"
+                                        >
+                                            <i className="fas fa-plus mr-2"></i> Add Transaction
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the app
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
